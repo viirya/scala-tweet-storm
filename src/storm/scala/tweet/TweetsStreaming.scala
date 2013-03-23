@@ -20,6 +20,9 @@ import com.streamer.twitter.config.{Config => TwitterConfig}
 import org.json4s._
 import org.json4s.jackson.JsonMethods._
 
+import com.redis._
+import akka.actor.{ ActorSystem, Props }
+
 
 class TweetStreamProcessor extends StreamProcessor {
 
@@ -82,6 +85,15 @@ class TweetStreamSpout extends StormSpout(outputFields = List("geo_lat", "geo_ln
   }
 }
 
+object Pub {
+  val system = ActorSystem("pub")
+  val r = new RedisClient("localhost", 6379)
+  val p = system.actorOf(Props(new Publisher(r)))
+
+  def publish(channel: String, message: String) = {
+    p ! Publish(channel, message)
+  }
+}
 
 class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng")) {
   var average_lat: Map[String, Double] = _
@@ -91,6 +103,7 @@ class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng")) {
     average_lat = new HashMap[String, Double]().withDefaultValue(0.0)
     average_lng = new HashMap[String, Double]().withDefaultValue(0.0)
   }
+
   def execute(t: Tuple) = t matchSeq {
     case Seq(geo_lat: Double, geo_lng: Double, lat: Double, lng: Double) =>
       average_lat(geo_lat.toString() + geo_lng.toString()) += lat
@@ -100,6 +113,9 @@ class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng")) {
       average_lng(geo_lat.toString() + geo_lng.toString()) /= 2.0
  
       using anchor t emit (geo_lat, geo_lng, average_lat(geo_lat.toString() + geo_lng.toString()), average_lng(geo_lat.toString() + geo_lng.toString()))
+
+      Pub.publish("tweets", average_lat(geo_lat.toString() + geo_lng.toString()) + ":" + average_lng(geo_lat.toString() + geo_lng.toString()))
+
       t ack
   }
 }
