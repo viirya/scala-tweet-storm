@@ -116,6 +116,8 @@ class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng")) {
 
       Pub.publish("tweets", average_lat(geo_lat.toString() + geo_lng.toString()) + ":" + average_lng(geo_lat.toString() + geo_lng.toString()))
 
+      Pub.publish("ori_tweets", lat.toString() + ":" + lng.toString())
+ 
       t ack
   }
 }
