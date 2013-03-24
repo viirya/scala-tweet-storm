@@ -96,26 +96,37 @@ object Pub {
 }
 
 class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng")) {
-  var average_lat: Map[String, Double] = _
-  var average_lng: Map[String, Double] = _
+  var average_lat: Map[String, List[Double]] = _
+  var average_lng: Map[String, List[Double]] = _
  
   setup {
-    average_lat = new HashMap[String, Double]().withDefaultValue(0.0)
-    average_lng = new HashMap[String, Double]().withDefaultValue(0.0)
+    average_lat = new HashMap[String, List[Double]]().withDefaultValue(List())
+    average_lng = new HashMap[String, List[Double]]().withDefaultValue(List())
   }
 
   def execute(t: Tuple) = t matchSeq {
     case Seq(geo_lat: Double, geo_lng: Double, lat: Double, lng: Double) =>
-      average_lat(geo_lat.toString() + geo_lng.toString()) += lat
-      average_lng(geo_lat.toString() + geo_lng.toString()) += lng
 
-      average_lat(geo_lat.toString() + geo_lng.toString()) /= 2.0
-      average_lng(geo_lat.toString() + geo_lng.toString()) /= 2.0
- 
+      average_lat(geo_lat.toString() + geo_lng.toString()) = lat :: average_lat(geo_lat.toString() + geo_lng.toString())
+      average_lng(geo_lat.toString() + geo_lng.toString()) = lng :: average_lng(geo_lat.toString() + geo_lng.toString())
+
+      if (average_lat(geo_lat.toString() + geo_lng.toString()).length > 1000) {
+        average_lat(geo_lat.toString() + geo_lng.toString()) = average_lat(geo_lat.toString() + geo_lng.toString()).dropRight(1)
+        average_lng(geo_lat.toString() + geo_lng.toString()) = average_lng(geo_lat.toString() + geo_lng.toString()).dropRight(1)
+      }
+
+      var all_lat = 0.0
+      var all_lng = 0.0
+      average_lat(geo_lat.toString() + geo_lng.toString()).foreach((lat) => all_lat += lat)
+      average_lng(geo_lat.toString() + geo_lng.toString()).foreach((lng) => all_lng += lng)
+      all_lat /= average_lat(geo_lat.toString() + geo_lng.toString()).length
+      all_lng /= average_lng(geo_lat.toString() + geo_lng.toString()).length
+
       using anchor t emit (geo_lat, geo_lng, average_lat(geo_lat.toString() + geo_lng.toString()), average_lng(geo_lat.toString() + geo_lng.toString()))
 
-      Pub.publish("tweets", average_lat(geo_lat.toString() + geo_lng.toString()) + ":" + average_lng(geo_lat.toString() + geo_lng.toString()))
-
+      if (all_lat != 0.0 || all_lng != 0.0) {
+        Pub.publish("tweets", all_lat.toString() + ":" + all_lng.toString() + ":" + average_lat(geo_lat.toString() + geo_lng.toString()).length)
+      }
       Pub.publish("ori_tweets", lat.toString() + ":" + lng.toString())
  
       t ack
