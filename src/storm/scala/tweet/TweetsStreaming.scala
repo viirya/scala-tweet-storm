@@ -85,6 +85,14 @@ class TweetStreamSpout extends StormSpout(outputFields = List("geo_lat", "geo_ln
   }
 }
 
+class ClockSpout extends StormSpout(outputFields = List("timestamp")) {
+  def nextTuple {
+    Thread sleep 1000 * 5
+    emit (System.currentTimeMillis / 1000)
+  }
+}
+
+
 object Pub {
   val system = ActorSystem("pub")
   val r = new RedisClient("localhost", 6379)
@@ -104,29 +112,45 @@ class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng")) {
     average_lng = new HashMap[String, List[Double]]().withDefaultValue(List())
   }
 
-  def execute(t: Tuple) = t matchSeq {
-    case Seq(geo_lat: Double, geo_lng: Double, lat: Double, lng: Double) =>
-
-      average_lat(geo_lat.toString() + geo_lng.toString()) = lat :: average_lat(geo_lat.toString() + geo_lng.toString())
-      average_lng(geo_lat.toString() + geo_lng.toString()) = lng :: average_lng(geo_lat.toString() + geo_lng.toString())
-
-      if (average_lat(geo_lat.toString() + geo_lng.toString()).length > 1000) {
-        average_lat(geo_lat.toString() + geo_lng.toString()) = average_lat(geo_lat.toString() + geo_lng.toString()).dropRight(1)
-        average_lng(geo_lat.toString() + geo_lng.toString()) = average_lng(geo_lat.toString() + geo_lng.toString()).dropRight(1)
-      }
-
+  def group_publish(elem_key: String) = {
+ 
       var all_lat = 0.0
       var all_lng = 0.0
-      average_lat(geo_lat.toString() + geo_lng.toString()).foreach((lat) => all_lat += lat)
-      average_lng(geo_lat.toString() + geo_lng.toString()).foreach((lng) => all_lng += lng)
-      all_lat /= average_lat(geo_lat.toString() + geo_lng.toString()).length
-      all_lng /= average_lng(geo_lat.toString() + geo_lng.toString()).length
+ 
+      average_lat(elem_key).foreach((lat) => all_lat += lat)
+      average_lng(elem_key).foreach((lng) => all_lng += lng)
 
-      using anchor t emit (geo_lat, geo_lng, average_lat(geo_lat.toString() + geo_lng.toString()), average_lng(geo_lat.toString() + geo_lng.toString()))
-
-      if (all_lat != 0.0 || all_lng != 0.0) {
-        Pub.publish("tweets", all_lat.toString() + ":" + all_lng.toString() + ":" + average_lat(geo_lat.toString() + geo_lng.toString()).length)
+      if (average_lat(elem_key).length > 0) {
+        all_lat /= average_lat(elem_key).length
+        all_lng /= average_lng(elem_key).length
       }
+
+      if (all_lat != 0.0 || all_lng != 0.0 || average_lat(elem_key).length == 0) {
+        Pub.publish("tweets", elem_key + ":" + all_lat.toString() + ":" + all_lng.toString() + ":" + average_lat(elem_key).length)
+      }
+
+      if (average_lat(elem_key).length == 0) {
+        average_lat.remove(elem_key)
+      }
+ 
+  } 
+
+  def execute(t: Tuple) = t matchSeq {
+    case Seq(clockTime: Long) =>
+        average_lat.foreach((elem) => { average_lat(elem._1) = elem._2.dropRight(1) })
+        average_lng.foreach((elem) => { average_lng(elem._1) = elem._2.dropRight(1) })
+
+    case Seq(geo_lat: Double, geo_lng: Double, lat: Double, lng: Double) =>
+      
+      val elem_key = geo_lat.toString() + ":" + geo_lng.toString()
+
+      average_lat(elem_key) = lat :: average_lat(geo_lat.toString() + geo_lng.toString())
+      average_lng(elem_key) = lng :: average_lng(geo_lat.toString() + geo_lng.toString())
+
+      using anchor t emit (geo_lat, geo_lng, average_lat(elem_key), average_lng(elem_key))
+
+      group_publish(elem_key)
+
       Pub.publish("ori_tweets", lat.toString() + ":" + lng.toString())
  
       t ack
@@ -139,8 +163,10 @@ object TweetsStreamingTopology {
     val builder = new TopologyBuilder
 
     builder.setSpout("tweetstream", new TweetStreamSpout, 1)
+    builder.setSpout("clock", new ClockSpout)
     builder.setBolt("geogrouping", new GeoGrouping, 12)
         .fieldsGrouping("tweetstream", new Fields("geo_lat", "geo_lng"))
+        .allGrouping("clock")
 
     val conf = new Config
     conf.setDebug(true)
