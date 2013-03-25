@@ -79,7 +79,7 @@ class TweetStreamSpout extends StormSpout(outputFields = List("geo_lat", "geo_ln
 
   def nextTuple = {
     processor.getLine() match {
-      case Some((lat: Double, lng: Double)) => emit (math.floor(lat * 100000), math.floor(lng * 100000), lat, lng)
+      case Some((lat: Double, lng: Double)) => emit (math.floor(lat * 10000), math.floor(lng * 10000), lat, lng)
       case None =>
     }
   }
@@ -87,7 +87,7 @@ class TweetStreamSpout extends StormSpout(outputFields = List("geo_lat", "geo_ln
 
 class ClockSpout extends StormSpout(outputFields = List("timestamp")) {
   def nextTuple {
-    Thread sleep 1000 * 5
+    Thread sleep 1000 * 1
     emit (System.currentTimeMillis / 1000)
   }
 }
@@ -106,10 +106,12 @@ object Pub {
 class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng")) {
   var average_lat: Map[String, List[Double]] = _
   var average_lng: Map[String, List[Double]] = _
+  var insert_time: Map[String, List[Long]] = _
  
   setup {
     average_lat = new HashMap[String, List[Double]]().withDefaultValue(List())
     average_lng = new HashMap[String, List[Double]]().withDefaultValue(List())
+    insert_time = new HashMap[String, List[Long]]().withDefaultValue(List())
   }
 
   def group_publish(elem_key: String) = {
@@ -131,21 +133,52 @@ class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng")) {
 
       if (average_lat(elem_key).length == 0) {
         average_lat.remove(elem_key)
+        average_lng.remove(elem_key)
+        insert_time.remove(elem_key)
       }
  
   } 
 
   def execute(t: Tuple) = t matchSeq {
     case Seq(clockTime: Long) =>
-        average_lat.foreach((elem) => { average_lat(elem._1) = elem._2.dropRight(1) })
-        average_lng.foreach((elem) => { average_lng(elem._1) = elem._2.dropRight(1) })
+
+        val current_time = System.currentTimeMillis
+        average_lat.foreach((elem) => {
+          var count = 0
+          average_lat(elem._1) = elem._2.filterNot((tweet) => {
+            count += 1
+            (current_time - insert_time(elem._1)(count - 1)) / 1000 > 5
+          })
+        })
+
+        average_lng.foreach((elem) => {
+          var count = 0
+          average_lng(elem._1) = elem._2.filterNot((tweet) => {
+            count += 1
+            (current_time - insert_time(elem._1)(count - 1)) / 1000 > 5
+        
+          })
+        })
+
+        insert_time.foreach((elem) => {
+          insert_time(elem._1) = elem._2.filterNot((record_time) => {
+            (current_time - record_time) / 1000 > 5
+          })
+        }) 
+
+        average_lat.foreach((elem) => {
+          if (elem._2.length == 0) {
+            group_publish(elem._1)
+          }
+        })
 
     case Seq(geo_lat: Double, geo_lng: Double, lat: Double, lng: Double) =>
       
       val elem_key = geo_lat.toString() + ":" + geo_lng.toString()
 
-      average_lat(elem_key) = lat :: average_lat(geo_lat.toString() + geo_lng.toString())
-      average_lng(elem_key) = lng :: average_lng(geo_lat.toString() + geo_lng.toString())
+      average_lat(elem_key) = lat :: average_lat(elem_key)
+      average_lng(elem_key) = lng :: average_lng(elem_key)
+      insert_time(elem_key) = System.currentTimeMillis :: insert_time(elem_key)
 
       using anchor t emit (geo_lat, geo_lng, average_lat(elem_key), average_lng(elem_key))
 
@@ -169,7 +202,7 @@ object TweetsStreamingTopology {
         .allGrouping("clock")
 
     val conf = new Config
-    conf.setDebug(true)
+    conf.setDebug(false)
     conf.setMaxTaskParallelism(3)
 
     val cluster = new LocalCluster
