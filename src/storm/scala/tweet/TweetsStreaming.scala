@@ -34,14 +34,17 @@ class TweetStreamProcessor extends StreamProcessor {
     }
   }
 
-  def parseJson(json: String): Option[(Double, Double)] = {
+  def parseJson(json: String): Option[(Double, Double, String)] = {
     (parse(json) \ "geo" \ "coordinates") match {
-      case JArray(List(JDouble(lng), JDouble(lat))) => Some((lat, lng))
+      case JArray(List(JDouble(lng), JDouble(lat))) =>
+        (parse(json) \ "text") match {
+          case JString(text) => Some((lat, lng, text))    
+        }
       case _ => None
     }
   }    
 
-  def getLine(): Option[(Double, Double)] = {
+  def getLine(): Option[(Double, Double, String)] = {
     if (reader != null) {
         reader.readLine() match {
           case line: String => parseJson(line)
@@ -59,7 +62,7 @@ class RunnableClient(client: BasicStreamingClient) extends Runnable {
   }
 }
  
-class TweetStreamSpout extends StormSpout(outputFields = List("geo_lat", "geo_lng", "lat", "lng")) {
+class TweetStreamSpout extends StormSpout(outputFields = List("geo_lat", "geo_lng", "lat", "lng", "txt")) {
 
   var processor: TweetStreamProcessor = _
   var username: String = _
@@ -79,7 +82,7 @@ class TweetStreamSpout extends StormSpout(outputFields = List("geo_lat", "geo_ln
 
   def nextTuple = {
     processor.getLine() match {
-      case Some((lat: Double, lng: Double)) => emit (math.floor(lat * 10000), math.floor(lng * 10000), lat, lng)
+      case Some((lat: Double, lng: Double, txt: String)) => emit (math.floor(lat * 10000), math.floor(lng * 10000), lat, lng, txt)
       case None =>
     }
   }
@@ -103,15 +106,17 @@ object Pub {
   }
 }
 
-class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng")) {
+class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng", "txt")) {
   var average_lat: Map[String, List[Double]] = _
   var average_lng: Map[String, List[Double]] = _
   var insert_time: Map[String, List[Long]] = _
+  var grp_tweets: Map[String, List[String]] = _
  
   setup {
     average_lat = new HashMap[String, List[Double]]().withDefaultValue(List())
     average_lng = new HashMap[String, List[Double]]().withDefaultValue(List())
     insert_time = new HashMap[String, List[Long]]().withDefaultValue(List())
+    grp_tweets = new HashMap[String, List[String]]().withDefaultValue(List())
   }
 
   def group_publish(elem_key: String) = {
@@ -127,14 +132,18 @@ class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng")) {
         all_lng /= average_lng(elem_key).length
       }
 
+      var concated_txt = ""
+      grp_tweets(elem_key).foreach((txt) => concated_txt += " " + txt)
+
       if (all_lat != 0.0 || all_lng != 0.0 || average_lat(elem_key).length == 0) {
-        Pub.publish("tweets", elem_key + ":" + all_lat.toString() + ":" + all_lng.toString() + ":" + average_lat(elem_key).length)
+        Pub.publish("tweets", elem_key + ":" + all_lat.toString() + ":" + all_lng.toString() + ":" + average_lat(elem_key).length + "\t" + concated_txt)
       }
 
       if (average_lat(elem_key).length == 0) {
         average_lat.remove(elem_key)
         average_lng.remove(elem_key)
         insert_time.remove(elem_key)
+        grp_tweets.remove(elem_key)
       }
  
   } 
@@ -156,10 +165,17 @@ class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng")) {
           average_lng(elem._1) = elem._2.filterNot((tweet) => {
             count += 1
             (current_time - insert_time(elem._1)(count - 1)) / 1000 > 5
-        
           })
         })
 
+        grp_tweets.foreach((elem) => {
+          var count = 0
+          grp_tweets(elem._1) = elem._2.filterNot((tweet) => {
+            count += 1
+            (current_time - insert_time(elem._1)(count - 1)) / 1000 > 5
+          })
+        })
+ 
         insert_time.foreach((elem) => {
           insert_time(elem._1) = elem._2.filterNot((record_time) => {
             (current_time - record_time) / 1000 > 5
@@ -172,13 +188,14 @@ class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng")) {
           }
         })
 
-    case Seq(geo_lat: Double, geo_lng: Double, lat: Double, lng: Double) =>
+    case Seq(geo_lat: Double, geo_lng: Double, lat: Double, lng: Double, txt: String) =>
       
       val elem_key = geo_lat.toString() + ":" + geo_lng.toString()
 
       average_lat(elem_key) = lat :: average_lat(elem_key)
       average_lng(elem_key) = lng :: average_lng(elem_key)
       insert_time(elem_key) = System.currentTimeMillis :: insert_time(elem_key)
+      grp_tweets(elem_key) = txt :: grp_tweets(elem_key)
 
       using anchor t emit (geo_lat, geo_lng, average_lat(elem_key), average_lng(elem_key))
 
