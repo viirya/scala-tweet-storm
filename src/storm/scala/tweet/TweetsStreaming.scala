@@ -5,6 +5,7 @@ import backtype.storm.Config
 import backtype.storm.LocalCluster
 import backtype.storm.topology.TopologyBuilder
 import backtype.storm.tuple.{Fields, Tuple, Values}
+import backtype.storm.StormSubmitter
 import collection.mutable.{Map, HashMap}
 import util.Random
 import java.io.InputStream
@@ -219,10 +220,24 @@ object TweetsStreamingTopology {
         .allGrouping("clock")
 
     val conf = new Config
-    conf.setDebug(false)
-    conf.setMaxTaskParallelism(3)
 
-    val cluster = new LocalCluster
-    cluster.submitTopology("tweets-streaming-grouping", conf, builder.createTopology)
+    if (args.length > 0) {
+        args(0) match {
+            case "local" => {
+                conf.setDebug(false)
+                conf.setMaxTaskParallelism(3)
+                
+                val cluster = new LocalCluster
+                cluster.submitTopology("tweets-streaming-grouping", conf, builder.createTopology)
+            }
+            case "remote" => {
+                conf.setNumWorkers(20);
+                conf.setMaxSpoutPending(5000);
+                StormSubmitter.submitTopology("tweets-streaming-grouping", conf, builder.createTopology);
+            }
+        }
+    } else {
+      println("Usage: storm jar <jarfile> storm.scala.tweet.TweetsStreamingTopology <local|remote>")
+    }
   }
 }
