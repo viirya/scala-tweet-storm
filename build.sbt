@@ -1,3 +1,5 @@
+import AssemblyKeys._ // put this at the top of the file
+
 import sbtrelease.ReleasePlugin._
 
 name := "scala-tweet-storm"
@@ -53,4 +55,27 @@ ivyLoggingLevel := UpdateLogging.Full
 
 // Aagin this may be useful for debugging
 logLevel := Level.Info
+
+assemblySettings
+
+test in assembly := {}
+
+excludedJars in assembly <<= (fullClasspath in assembly) map { cp => 
+  cp filter {jar => jar.data.getName == "servlet-api-2.5-20081211.jar" || jar.data.getName == "scalatest-1.3.jar" || jar.data.getName == "storm-0.8.1.jar"}
+}
+
+mergeStrategy in assembly <<= (mergeStrategy in assembly) { (old) =>
+  {
+    case "project.clj"     => MergeStrategy.discard
+    case x => old(x)
+  }
+}
+
+fullClasspath in assembly <<= (fullClasspath in assembly, baseDirectory) map { (cp, bd) =>
+  cp :+ Attributed.blank(bd / "config") 
+  //cp :+ Attributed.blank(baseDirectory( _ / "conf" ))
+}
+
+
+
 
