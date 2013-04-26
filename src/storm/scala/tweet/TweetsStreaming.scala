@@ -13,6 +13,8 @@ import java.io.InputStreamReader
 import java.io.BufferedReader
 import java.util.zip.GZIPInputStream
 
+import scala.io.Codec
+
 import com.mongodb.casbah.Imports._
 
 import com.streamer.twitter._
@@ -108,16 +110,52 @@ object Pub {
 }
 
 class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng", "txt")) {
+
+  import nak.NakContext._
+  import nak.core._
+  import nak.data._
+  import nak.liblinear.LiblinearConfig
+  import nak.util.ConfusionMatrix
+
+  import java.io.File
+
+
   var average_lat: Map[String, List[Double]] = _
   var average_lng: Map[String, List[Double]] = _
   var insert_time: Map[String, List[Long]] = _
   var grp_tweets: Map[String, List[String]] = _
+
+  implicit var isoCodec: Codec = _
+
+  val stopwords = Set("the","a","an","of","in","for","by","on")
+  var featurizer: Featurizer[String, String] = _
+  var classifier: IndexedClassifier[String] with FeaturizedClassifier[String, String] = null
  
   setup {
     average_lat = new HashMap[String, List[Double]]().withDefaultValue(List())
     average_lng = new HashMap[String, List[Double]]().withDefaultValue(List())
     insert_time = new HashMap[String, List[Long]]().withDefaultValue(List())
     grp_tweets = new HashMap[String, List[String]]().withDefaultValue(List())
+
+    setup_classifier()
+  }
+
+  def setup_classifier() = {
+ 
+    isoCodec = scala.io.Codec("ISO-8859-1")
+    featurizer = new BowFeaturizer(stopwords)
+   
+    val modelFile = new File(getClass.getResource("/corpus/20Newsgroups.model").getFile()) 
+    val fmapFile = new File(getClass.getResource("/corpus/20Newsgroups.fmap").getFile())
+    val lmapFile = new File(getClass.getResource("/corpus/20Newsgroups.lmap").getFile())
+
+    classifier = loadClassifier(modelFile, fmapFile, lmapFile, featurizer)
+  }
+
+  def predict_tweets(tweets: String) = {
+
+    val maxLabelNews = maxLabel(classifier.labels) _
+    maxLabelNews(classifier.evalRaw(tweets))
   }
 
   def group_publish(elem_key: String) = {
@@ -136,8 +174,10 @@ class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng", "tx
       var concated_txt = ""
       grp_tweets(elem_key).foreach((txt) => concated_txt += " " + txt)
 
+      val predict_label = predict_tweets(concated_txt)
+
       if (all_lat != 0.0 || all_lng != 0.0 || average_lat(elem_key).length == 0) {
-        Pub.publish("tweets", elem_key + ":" + all_lat.toString() + ":" + all_lng.toString() + ":" + average_lat(elem_key).length + "\t" + concated_txt)
+        Pub.publish("tweets", elem_key + ":" + all_lat.toString() + ":" + all_lng.toString() + ":" + average_lat(elem_key).length + "\t" + concated_txt + "\t" + predict_label)
       }
 
       if (average_lat(elem_key).length == 0) {

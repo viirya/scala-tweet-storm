@@ -39,6 +39,8 @@ libraryDependencies += "org.json4s" %% "json4s-jackson" % "3.1.0"
 
 libraryDependencies += "net.debasishg" % "redisclient_2.10" % "2.10"
 
+libraryDependencies +=  "net.debasishg" % "sjson_2.10" % "0.19"
+
 
 // This is to prevent error [java.lang.OutOfMemoryError: PermGen space]
 javaOptions += "-XX:MaxPermSize=1g"
