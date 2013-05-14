@@ -12,6 +12,7 @@ import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.BufferedReader
 import java.util.zip.GZIPInputStream
+import java.net.SocketTimeoutException
 
 import scala.io.Codec
 
@@ -33,7 +34,7 @@ class TweetStreamProcessor extends StreamProcessor {
 
   override def process(is: InputStream): Unit = {
     reader = new BufferedReader(new InputStreamReader(new GZIPInputStream(is), "UTF-8"))
-    while(true) {
+    while(reader != null) {
     }
   }
 
@@ -56,6 +57,10 @@ class TweetStreamProcessor extends StreamProcessor {
     } else {
       None
     }
+  }
+
+  def clean() = {
+    reader = null
   }
 }
 
@@ -84,9 +89,18 @@ class TweetStreamSpout extends StormSpout(outputFields = List("geo_lat", "geo_ln
   }
 
   def nextTuple = {
-    processor.getLine() match {
-      case Some((lat: Double, lng: Double, txt: String)) => emit (math.floor(lat * 10000), math.floor(lng * 10000), lat, lng, txt)
-      case None =>
+    try {
+      processor.getLine() match {
+        case Some((lat: Double, lng: Double, txt: String)) => emit (math.floor(lat * 10000), math.floor(lng * 10000), lat, lng, txt)
+        case None =>
+      }
+    } catch {
+      case e: SocketTimeoutException =>
+        println("SocketTimeoutException")
+
+        processor.clean()
+        twitterClient = new BasicStreamingClient(username, password, processor.asInstanceOf[StreamProcessor])
+        new Thread(new RunnableClient(twitterClient)).start()
     }
   }
 }
