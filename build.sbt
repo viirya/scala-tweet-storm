@@ -43,6 +43,11 @@ libraryDependencies +=  "net.debasishg" % "sjson_2.10" % "0.19"
 
 //libraryDependencies += "com.github.pmerienne" % "trident-ml" % "0.0.2"
 
+libraryDependencies += "org.jblas" % "jblas" % "1.2.3"
+
+libraryDependencies += "org.apache.lucene" % "lucene-analyzers" % "3.6.2"
+
+
 // This is to prevent error [java.lang.OutOfMemoryError: PermGen space]
 javaOptions += "-XX:MaxPermSize=1g"
 
