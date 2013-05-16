@@ -47,6 +47,8 @@ libraryDependencies += "org.jblas" % "jblas" % "1.2.3"
 
 libraryDependencies += "org.apache.lucene" % "lucene-analyzers" % "3.6.2"
 
+libraryDependencies += "org.codehaus.jackson" % "jackson-mapper-asl" % "1.9.12"
+
 
 // This is to prevent error [java.lang.OutOfMemoryError: PermGen space]
 javaOptions += "-XX:MaxPermSize=1g"
