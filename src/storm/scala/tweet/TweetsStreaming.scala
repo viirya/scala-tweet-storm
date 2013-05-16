@@ -1,11 +1,18 @@
 package storm.scala.tweet
 
 import storm.scala.dsl._
-import backtype.storm.Config
-import backtype.storm.LocalCluster
+import storm.scala.dsl.FunctionalTrident._
 import backtype.storm.topology.TopologyBuilder
 import backtype.storm.tuple.{Fields, Tuple, Values}
-import backtype.storm.StormSubmitter
+
+import storm.trident.tuple.TridentTuple
+import storm.trident.operation.{TridentCollector, BaseFunction}
+import storm.trident.TridentTopology
+import storm.trident.testing.{MemoryMapState, FixedBatchSpout}
+import backtype.storm.{StormSubmitter, LocalDRPC, LocalCluster, Config}
+import storm.trident.operation.builtin._
+import storm.trident.state.{State, QueryFunction}
+
 import collection.mutable.{Map, HashMap}
 import util.Random
 import java.io.InputStream
@@ -26,6 +33,8 @@ import org.json4s.jackson.JsonMethods._
 
 import com.redis._
 import akka.actor.{ ActorSystem, Props }
+
+import com.github.pmerienne.trident.ml.nlp.TwitterSentimentClassifier
 
 
 class TweetStreamProcessor extends StreamProcessor {
@@ -144,6 +153,9 @@ class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng", "tx
   val stopwords = Set("the","a","an","of","in","for","by","on")
   var featurizer: Featurizer[String, String] = _
   var classifier: IndexedClassifier[String] with FeaturizedClassifier[String, String] = null
+
+  var tweet_classifier: TwitterSentimentClassifier = _
+
  
   setup {
     average_lat = new HashMap[String, List[Double]]().withDefaultValue(List())
@@ -164,12 +176,23 @@ class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng", "tx
     val lmapFile = new File(getClass.getResource("/corpus/20Newsgroups.lmap").getFile())
 
     classifier = loadClassifier(modelFile, fmapFile, lmapFile, featurizer)
+
+    tweet_classifier = new TwitterSentimentClassifier()
+
   }
 
   def predict_tweets(tweets: String) = {
 
     val maxLabelNews = maxLabel(classifier.labels) _
     maxLabelNews(classifier.evalRaw(tweets))
+  }
+
+  def predict_tweets_sentiment(tweets: String): String = {
+    tweet_classifier.classify(tweets) match {
+      case java.lang.Boolean.TRUE => return "positive"
+      case java.lang.Boolean.FALSE => return "negative"
+      case _ => return "unknown"
+    }
   }
 
   def group_publish(elem_key: String) = {
@@ -189,9 +212,10 @@ class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng", "tx
       grp_tweets(elem_key).foreach((txt) => concated_txt += " " + txt)
 
       val predict_label = predict_tweets(concated_txt)
+      var sentiment_label = predict_tweets_sentiment(concated_txt)
 
       if (all_lat != 0.0 || all_lng != 0.0 || average_lat(elem_key).length == 0) {
-        Pub.publish("tweets", elem_key + ":" + all_lat.toString() + ":" + all_lng.toString() + ":" + average_lat(elem_key).length + "\t" + concated_txt + "\t" + predict_label)
+        Pub.publish("tweets", elem_key + ":" + all_lat.toString() + ":" + all_lng.toString() + ":" + average_lat(elem_key).length + "\t" + concated_txt + "\t" + predict_label + "\t" + sentiment_label)
       }
 
       if (average_lat(elem_key).length == 0) {
@@ -264,6 +288,7 @@ class GeoGrouping extends StormBolt(List("geo_lat", "geo_lng", "lat", "lng", "tx
 
 
 object TweetsStreamingTopology {
+
   def main(args: Array[String]) = {
     val builder = new TopologyBuilder
 
