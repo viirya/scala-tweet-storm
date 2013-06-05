@@ -110,6 +110,8 @@ class TweetStreamSpout extends StormSpout(outputFields = List("geo_lat", "geo_ln
         processor.clean()
         twitterClient = new BasicStreamingClient(username, password, processor.asInstanceOf[StreamProcessor])
         new Thread(new RunnableClient(twitterClient)).start()
+      case e: Exception =>
+        println("Exception caught: " + e)
     }
   }
 }
