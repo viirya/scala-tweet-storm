@@ -27,6 +27,7 @@ import com.mongodb.casbah.Imports._
 
 import com.streamer.twitter._
 import com.streamer.twitter.config.{Config => TwitterConfig}
+import com.streamer.twitter.oauth._
 
 import org.json4s._
 import org.json4s.jackson.JsonMethods._
@@ -73,7 +74,7 @@ class TweetStreamProcessor extends StreamProcessor {
   }
 }
 
-class RunnableClient(client: BasicStreamingClient) extends Runnable {
+class RunnableClient(client: OAuthStreamingClient) extends Runnable {
   def run() {
     client.filter(locations = "-180,-90,180,90")
   }
@@ -82,18 +83,20 @@ class RunnableClient(client: BasicStreamingClient) extends Runnable {
 class TweetStreamSpout extends StormSpout(outputFields = List("geo_lat", "geo_lng", "lat", "lng", "txt")) {
 
   var processor: TweetStreamProcessor = _
-  var username: String = _
-  var password: String = _
 
-  var twitterClient: BasicStreamingClient = _
+  var consumer: Consumer = _
+  var token: Token = _
+
+  var twitterClient: OAuthStreamingClient = _
   var tweet_thread: Thread = _
 
   setup {
     processor = new TweetStreamProcessor()
-    username = TwitterConfig.readString("username")
-    password = TwitterConfig.readString("password")
 
-    twitterClient = new BasicStreamingClient(username, password, processor.asInstanceOf[StreamProcessor])
+    val consumer = Consumer(TwitterConfig.readString("consumer.key"), TwitterConfig.readString("consumer.secret"))
+    val token = Token(TwitterConfig.readString("access.token"), TwitterConfig.readString("access.secret"))
+    twitterClient = new OAuthStreamingClient(consumer, token, processor.asInstanceOf[StreamProcessor])
+
     new Thread(new RunnableClient(twitterClient)).start()
   }
 
@@ -108,7 +111,7 @@ class TweetStreamSpout extends StormSpout(outputFields = List("geo_lat", "geo_ln
         println("SocketTimeoutException")
 
         processor.clean()
-        twitterClient = new BasicStreamingClient(username, password, processor.asInstanceOf[StreamProcessor])
+        twitterClient = new OAuthStreamingClient(consumer, token, processor.asInstanceOf[StreamProcessor])
         new Thread(new RunnableClient(twitterClient)).start()
       case e: Exception =>
         println("Exception caught: " + e)
