@@ -93,8 +93,8 @@ class TweetStreamSpout extends StormSpout(outputFields = List("geo_lat", "geo_ln
   setup {
     processor = new TweetStreamProcessor()
 
-    val consumer = Consumer(TwitterConfig.readString("consumer.key"), TwitterConfig.readString("consumer.secret"))
-    val token = Token(TwitterConfig.readString("access.token"), TwitterConfig.readString("access.secret"))
+    consumer = Consumer(TwitterConfig.readString("consumer.key"), TwitterConfig.readString("consumer.secret"))
+    token = Token(TwitterConfig.readString("access.token"), TwitterConfig.readString("access.secret"))
     twitterClient = new OAuthStreamingClient(consumer, token, processor.asInstanceOf[StreamProcessor])
 
     new Thread(new RunnableClient(twitterClient)).start()
